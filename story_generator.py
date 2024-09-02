@@ -1,4 +1,5 @@
 import logging
+import re
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_core.pydantic_v1 import BaseModel, Field
@@ -6,6 +7,9 @@ from langchain_openai import ChatOpenAI
 import os
 from datetime import datetime
 import streamlit as st
+import glob
+from pathlib import Path
+from urllib.parse import quote, unquote
 
 story_structure_chooser = """
 use the handbook for choosing story structure to determine which story structure is proper for a story like this:
@@ -442,10 +446,11 @@ only give the act text with NO pre text or post text such as "here is the text f
 """
 
 # Set up OpenAI API key
-os.environ["OPENAI_API_KEY"] = "Your api key here"
-
+os.environ["OPENAI_API_KEY"] = "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"
+# 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
 # Initialize ChatOpenAI model
-model = ChatOpenAI(base_url="https://openrouter.ai/api/v1", model="meta-llama/llama-3.1-8b-instruct:free")
+model = ChatOpenAI(base_url="https://openrouter.ai/api/v1", model="meta-llama/llama-3.1-8b-instruct:free", temperature=0.75)
+
 
 # Define data structures for parsing
 class Chapter(BaseModel):
@@ -538,6 +543,12 @@ def write_act(prompt, blueprint, chapter_desc, act_number, chapter_number, act_d
     full_prompt = prompt.format(**format_dict)
     return get_completion(full_prompt)
 
+# Create a sidebar for logs
+sidebar = st.sidebar
+sidebar.title("Logs")
+log_area = sidebar.empty()
+
+
 log_data = ""
 def log(log_text):
     global log_data
@@ -545,9 +556,37 @@ def log(log_text):
     log_data += log_line
     log_area.markdown(f"\n{log_data}\n")
 
+# Modified function to save or update the story file
+def save_story(content, prompt=None, mode='a'):
+    # Create a 'stories' folder if it doesn't exist
+    stories_folder = Path("stories")
+    stories_folder.mkdir(exist_ok=True)
+    
+    # Use the global variable for the current story's filename
+    global current_story_file
+    
+    if mode == 'w':  # Start a new story
+        # Generate a filename with timestamp and prompt
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_prompt = quote(prompt[:50])  # Use first 50 chars of prompt, URL-encoded
+        current_story_file = stories_folder / f"story_{timestamp}_{safe_prompt}.md"
+        
+        # Save the prompt
+        with open(current_story_file, "w") as f:
+            f.write(f"# Story based on prompt: {prompt}\n\n")
+    
+    # Append or write the content
+    with open(current_story_file, mode) as f:
+        f.write(content)
+    
+    log(f"[{datetime.now()}] Story updated in {current_story_file}")
+
 def generate_story(prompt):
     st.header("Story")
     log(f"[{datetime.now()}] Starting story generation process")
+
+    # Initialize the story file with the prompt
+    save_story("", prompt, mode='w')
 
     # Get the initial story prompt from the user
     story_prompt = prompt
@@ -580,6 +619,10 @@ def generate_story(prompt):
         log(f"[{datetime.now()}] Processing Chapter {chapter_number}: {chapter_title}")
         st.subheader(f"Chapter {chapter_number}: {chapter_title}")
 
+        # Save chapter title in markdown format
+        chapter_header = f"\n## Chapter {chapter_number}: {chapter_title}\n\n"
+        save_story(chapter_header)
+
         story[chapter_title] = ""
 
         # Generate and process acts for the current chapter
@@ -606,6 +649,9 @@ def generate_story(prompt):
             log(f"[{datetime.now()}] Act {act_number} written for Chapter {chapter_number}")
             log(f"[{datetime.now()}] Act {act_number} content for Chapter {chapter_number}: {act_text[:100]}...") # Print first 100 characters of the act
             st.write(act_text)
+            # Save the act text
+            save_story(act_text + "\n\n")
+
             st.text("")
             story[chapter_title] += "\n" + act_text
             log(act_text)
@@ -616,6 +662,28 @@ def generate_story(prompt):
     log(f"[{datetime.now()}] Full story text (first 200 characters): {full_text[:200]}...")
 
     return full_text
+
+# Modified function to load and display previous stories
+def load_previous_stories():
+    stories_folder = Path("stories")
+    story_files = glob.glob(str(stories_folder / "story_*.md"))
+    story_files.sort(reverse=True)  # Sort by most recent first
+    
+    for file in story_files:
+        filename = os.path.basename(file)
+        match = re.match(r"story_(\d{8}_\d{6})_(.*?)\.md", filename)
+        if match:
+            timestamp, encoded_prompt = match.groups()
+            prompt = unquote(encoded_prompt)
+            
+            with open(file, "r") as f:
+                content = f.read()
+            
+            # Create an expander for each story
+            with st.expander(f"Story from {timestamp} - Prompt: {prompt}"):
+                st.markdown(content)
+        else:
+            st.warning(f"Couldn't parse filename: {filename}")
 
 # Custom CSS to reduce font size in the sidebar
 st.markdown("""
@@ -628,16 +696,20 @@ st.markdown("""
 
 # Streamlit UI setup
 st.title("Story Generator")
-story_prompt = st.text_input("Enter your story prompt:")
-generate_button = st.button("Generate Story")
 
-# Create a sidebar for logs
-sidebar = st.sidebar
-sidebar.title("Logs")
-log_area = sidebar.empty()
+# Create tabs for Generate and Previous Stories
+tab1, tab2 = st.tabs(["Generate Story", "Previous Stories"])
 
-if generate_button:
-    if story_prompt:
-        generate_story(story_prompt)
-    else:
-        st.warning("Please enter a story prompt!")
+with tab1:
+    story_prompt = st.text_input("Enter your story prompt:")
+    generate_button = st.button("Generate Story")
+
+    if generate_button:
+        if story_prompt:
+            generate_story(story_prompt)
+        else:
+            st.warning("Please enter a story prompt!")
+
+with tab2:
+    load_previous_stories()
+
