@@ -446,8 +446,7 @@ only give the act text with NO pre text or post text such as "here is the text f
 """
 
 # Set up OpenAI API key
-os.environ["OPENAI_API_KEY"] = "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"
-# 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
+os.environ["OPENAI_API_KEY"] = "UR API KEY HERE"
 # Initialize ChatOpenAI model
 model = ChatOpenAI(base_url="https://openrouter.ai/api/v1", model="meta-llama/llama-3.1-8b-instruct:free", temperature=0.75)
 
